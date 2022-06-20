@@ -41,7 +41,10 @@ class HMMSearchParser:
                         domain.hit_end,
                         domain.evalue
                     ]
-                    records.append( {key: val for key, val in zip(KEYS, values)} )
+                    records.append({
+                        key: val
+                        for key, val in zip(HMMSearchParser.KEYS, values)
+                    })
         return records
 
 
@@ -105,7 +108,7 @@ class Aln2Fasta:
 
     def write(self, outfilename):
         with open(outfilename, "w") as outfile:
-            for record in records:
+            for record in self.records:
                 outfile.write(
                         ">{}\n{}\n".format(*record.values)
                 )
