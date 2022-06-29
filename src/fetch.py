@@ -1,8 +1,8 @@
 """
 Classes for fetching sequence data from different sources.
-
 """
 
+import os
 import csv
 import math
 import requests
@@ -10,9 +10,13 @@ import pandas as pd
 from Bio import Entrez
 Entrez.email = "eloyvallina33@gmail.com"
 
+def chunks(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
 class RefSeqFetch:
     """
-    Given RefSeq protein ideas, retrieve sequence and taxonomic information
+    Given RefSeq protein ids, retrieve sequence and taxonomic information
     over the NCBI Entrez interface.
     """
     taxkeys = ["kingdom", "phylum", "subphylum", "class", "order", "family", "genus"]
@@ -20,32 +24,33 @@ class RefSeqFetch:
         self.ids = ids
 
     def post(self):
-        handle = Entrez.epost("protein", id=",".join(self.ids))
-        return Entrez.read(handle).values()
+        for chunk in chunks(self.ids, 200):
+            handle = Entrez.epost("protein", id=",".join(chunk))
+            yield Entrez.read(handle).values()
 
     def fetch(self):
-        query_key, WebEnv = self.post()
-        handle = Entrez.efetch(
-                        db="protein",
-                        query_key=query_key,
-                        WebEnv=WebEnv,
-                        retmode="xml"
-                        )
-        return handle
+        for query_key, WebEnv in self.post():
+            handle = Entrez.efetch(
+                            db="protein",
+                            query_key=query_key,
+                            WebEnv=WebEnv,
+                            retmode="xml"
+                            )
+            yield handle
 
     def getdata(self):
-        handle = self.fetch()
         rows = []
-        for entry in Entrez.read(handle):
-            row = dict(
+        for handle in self.fetch():
+            for entry in Entrez.read(handle):
+                row = dict(
                             zip(
                                 RefSeqFetch.taxkeys,
                                 entry['GBSeq_taxonomy'].split("; ")
                             )
                         )
-            row["refseq_accno"] = entry['GBSeq_accession-version']
-            row["sequence"] = entry['GBSeq_sequence']
-            rows.append(row)
+                row["refseq_accno"] = entry['GBSeq_accession-version']
+                row["sequence"] = entry['GBSeq_sequence'].upper()
+                rows.append(row)
         return rows
 
 
@@ -116,21 +121,42 @@ class COGFetch:
         return self.sequencer.getdata()
 
 
-    def writeout(self, filename="") -> pd.DataFrame:
+    def writeout(self, dirname="cogs"):
         """
-        Merge sequence and COG data and return a single DataFrame. If filename,
-        suppres output and write dataframe to file.
+        Merge sequence and COG data and write dataframe to file.
+        """
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
+        out = self.toDataFrame()
+        out.to_csv(f"{dirname}/{self.cogid}.tsv", index=False, sep="\t")
+
+
+    def writefasta(self, dirname="fasta"):
+        """
+        Write sequences in fasta format.
+        """
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
+        with open(f"{dirname}/{self.cogid}.fasta", "w") as fastafile:
+            for row in self.sequences:
+                acc = row['refseq_accno']
+                seq = row['sequence']
+
+                fastafile.write(f">{acc}\n{seq}\n")
+
+    def toDataFrame(self) -> pd.DataFrame:
+        """
+        Merge sequence and COG data and return a dataframe
         """
         seqdf = pd.DataFrame(self.sequences)
         cogdf = pd.DataFrame(self.records)
-        out = seqdf.merge(cogdf, on = "refseq_accno")
-        if filename:
-            out.to_csv(filename, index=False)
-            return
-
-        return out
+        return cogdf.merge(seqdf, on = "refseq_accno")
 
 
 if __name__ == '__main__':
-    fetcher = COGFetch("COG0417")
-    df = fetcher.writeout()
+    for cogid in ["COG0305", "COG0209", "COG0417"]:
+        fetcher = COGFetch(cogid, pagefrom=1, pageto=math.inf)
+        fetcher.writeout()
+        fetcher.writefasta()

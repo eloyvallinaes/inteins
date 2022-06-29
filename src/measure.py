@@ -1,6 +1,9 @@
-import numpy as np
+"""
+A Measure class for measuring physicochemical properties on proteins and their
+inteins
+"""
+
 import pandas as pd
-import matplotlib.pyplot as plt
 
 class Measure:
     AA = 'ACDEFGHIKLMNPQRSTVWY'
@@ -55,20 +58,24 @@ class Measure:
             fNeg = sum([seq.count(letter) for letter in "DE"]) / L
             fCharged = fPos + fNeg
             fFatty = sum([seq.count(letter) for letter in "FLIV"]) / L
-            nc = seq.count("K") + seq.count("R") - seq.count("D") - seq.count("E")
+            nc = seq.count("K")+seq.count("R")-seq.count("D")-seq.count("E")
             mw = L * 110
             sasa = 6.3 * mw**0.73
             ncd1000 =  nc / sasa * 1000
             mwkda = mw / 1000
 
             values = [L, sasa, mwkda, fCharged, fFatty, fPos, fNeg, nc, ncd1000]
-            data.update( {f"{key}_{name}": val for key, val in zip(Measure.COLNAMES, values)} )
+            data.update({
+                f"{key}_{name}": val
+                for key, val in zip(Measure.COLNAMES, values)
+            })
             data.update( {'refseq_accno': acc} )
+
         return data
 
     @classmethod
     def splitseq(cls, row):
-        seq = row.sequence
+        seq = row.sequence.upper()
         start = row.start
         end = row.end
         intein = seq[start:end]
@@ -95,4 +102,15 @@ class Measure:
 
 
 if __name__=='__main__':
-    m = Measure("csv/rnr_refseq_proteins.tsv", "csv/rnr_nterm_segments.csv", "csv/rnr_cterm_segments.csv")
+    from pathlib import Path
+    cogs = Path("cogs")
+    csv = Path("csv")
+    results = {}
+    for subset in ["COG0209", "COG0417", "COG0305"]:
+        seqfile = cogs / f"{subset}.tsv"
+        nterms = csv / f"TIGR01445.1_{subset}.csv"
+        cterms = csv / f"TIGR01443.1_{subset}.csv"
+
+        m = Measure(seqfile, nterms, cterms)
+        results[subset] = m.records
+        print(subset, m.records.shape)
