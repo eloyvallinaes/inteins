@@ -1,15 +1,16 @@
 # Exploring intein physicochemical properties with respect to host proteins
 
 ## Intein signatures
-PS50817 INTEIN_N_TER
+PS50817 TIGR01445   INTEIN_N_TER
 
-PS50819 INTEIN_ENDONUCLEASE
+PS50819     INTEIN_ENDONUCLEASE
 
-PS50818 INTEIN_C_TER
+PS50818 TIGR01443   INTEIN_C_TER
 
 ## COG families
-COG0417 Replicative DNA helicase (archaea)
 
-COG0305 Replicative DNA helicase (bacteria)
-
-COG0209 Ribonucleotide reductase (archaea and bacteria)
+| Kingdom | Protein                     | Code      | SeqCounts | Inteins |
+|---------| ----------------------------| --------  | --------- | ------- |
+| Archaea | Replicative DNA helicase    | COG0417   | 425       | 1       |
+| Bacteria| Replicative DNA helicase    | COG0305   | 1511      | 14      |
+| A&B     | Ribonucleotide reductase    | COG0209   | 1703      | 16      |
