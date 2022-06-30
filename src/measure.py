@@ -19,85 +19,111 @@ class Measure:
         "ncd1000",
     ]
     def __init__(self, seqfile, ntermfile, ctermfile):
-        self.sequences = pd.read_csv(seqfile, sep="\t")
-        self.segments = self.extract_segments(ntermfile, ctermfile)
-        self.accs = self.segments.refseq_accno.values
-        self.inteindata = self.mark_inteins()
-        self.records = self.measure()
+        self.sequences =  pd.read_csv(seqfile, sep="\t")\
+                            .to_dict(orient = "records")
+        self.segments = self.extract_segments(ntermfile, ctermfile)\
+                            .to_dict(orient="records")
+        self.seqmap = {
+            row['refseq_accno']: row['sequence']
+            for row in self.sequences
+        }
+        self.regions = self.mark_regions()
+        self.hostdata = self.measure_host()
+        self.inteindata = self.measure_inteins()
 
     def extract_segments(self, ntermfile, ctermfile):
-        nsegs = pd.read_csv(ntermfile)
-        csegs = pd.read_csv(ctermfile)
-        segments = pd.concat([nsegs, csegs])
-        # Extract proteins with exactly two intein hits
-        segcounts = segments.refseq_accno.value_counts()
-        accs = segcounts[segcounts == 2].index
-        return segments[segments.refseq_accno.isin(accs)]
+        columns = ["start", "motifname", "motifacc"]
+        nterm = pd.read_csv(ntermfile).drop("end", axis = "columns")
+        cterm = pd.read_csv(ctermfile).drop(columns, axis = "columns")
+        ss = nterm.merge(cterm, on="refseq_accno")
+        ss['span'] = ss.end - ss.start
+        return ss[ss.span > 0].sort_values("span").drop_duplicates("start")
 
-
-    def mark_inteins(self):
-        seqs =  self.sequences
-        segments = self.segments
-        accs = self.accs
-        data = segments[segments.refseq_accno.isin(accs)]
-        Ndata = data[data.motifname == "intein_Nterm"][["refseq_accno", "start"]]
-        Cdata = data[data.motifname == "intein_Cterm"][["refseq_accno", "end"]]
-        inteins =  Ndata.merge(Cdata, on = "refseq_accno", how = "inner")
-        inteins["span"] = inteins.end - inteins.start
-        inteins = inteins[inteins.span > 0]
-        return inteins.merge(seqs[["refseq_accno","sequence"]], on="refseq_accno")
-
-    @classmethod
-    def measure_row(cls, row):
-        acc = row.refseq_accno
+    def mark_regions(self):
         data = {}
-        for name, seq in Measure.splitseq(row).items():
-            L = len(seq)
-            data.update( {f"{letter}_{name}": seq.count(letter)/L for letter in Measure.AA} )
-            fPos = sum([seq.count(letter) for letter in "KR"]) / L
-            fNeg = sum([seq.count(letter) for letter in "DE"]) / L
-            fCharged = fPos + fNeg
-            fFatty = sum([seq.count(letter) for letter in "FLIV"]) / L
-            nc = seq.count("K")+seq.count("R")-seq.count("D")-seq.count("E")
-            mw = L * 110
-            sasa = 6.3 * mw**0.73
-            ncd1000 =  nc / sasa * 1000
-            mwkda = mw / 1000
-
-            values = [L, sasa, mwkda, fCharged, fFatty, fPos, fNeg, nc, ncd1000]
-            data.update({
-                f"{key}_{name}": val
-                for key, val in zip(Measure.COLNAMES, values)
-            })
-            data.update( {'refseq_accno': acc} )
-
+        for acc, sequence in self.seqmap.items():
+            segments = [    segment
+                            for segment in self.segments
+                            if segment['refseq_accno'] == acc
+                    ]
+            inteins = Measure.extract_inteins(sequence, segments)
+            hostseq = Measure.extract_host(sequence, inteins)
+            data[acc] = {'inteins': inteins, 'host': hostseq}
         return data
 
+    def measure_inteins(self):
+        data = []
+        for acc, regions in self.regions.items():
+            for intein in regions['inteins']:
+                data.append( Measure.physcoprops(intein['seq'], acc) )
+        return data
+
+
+    def measure_host(self):
+        data = []
+        for acc, regions in self.regions.items():
+            data.append( Measure.physcoprops(regions['host'], acc) )
+        return data
+
+    def write_hostdata(self, outname):
+        pd.DataFrame(self.hostdata).to_csv(outname, index=False)
+
+    def write_inteindata(self, outname):
+        pd.DataFrame(self.inteindata).to_csv(outname, index=False)
+
+
     @classmethod
-    def splitseq(cls, row):
-        seq = row.sequence.upper()
-        start = row.start
-        end = row.end
-        intein = seq[start:end]
-        rnr = seq[0:start] + seq[end:-1]
-        return {'rnr': rnr, 'intein': intein}
+    def physcoprops(cls, seq, acc):
+        # aa composition
+        L = len(seq)
+        props = {f"{letter}": seq.count(letter)/L for letter in Measure.AA}
+        # accession
+        props['refseq_accno'] = acc
+        # properties
+        fPos = sum([seq.count(letter) for letter in "KR"]) / L
+        fNeg = sum([seq.count(letter) for letter in "DE"]) / L
+        fCharged = fPos + fNeg
+        fFatty = sum([seq.count(letter) for letter in "FLIV"]) / L
+        nc = seq.count("K")+seq.count("R")-seq.count("D")-seq.count("E")
+        mw = L * 110
+        sasa = 6.3 * mw**0.73
+        ncd1000 =  nc / sasa * 1000
+        mwkda = mw / 1000
+
+        values = [L, sasa, mwkda, fCharged, fFatty, fPos, fNeg, nc, ncd1000]
+        props.update({
+            f"{key}": val
+            for key, val in zip(Measure.COLNAMES, values)
+        })
+        return props
 
 
-    def measure(self):
-        records = []
-        for ind, row in self.inteindata.iterrows():
-            records.append( Measure.measure_row(row) )
-        return pd.DataFrame(records)
+    @classmethod
+    def extract_host(cls, sequence, inteins):
+        indeces = [0]
+        for i in inteins:
+            indeces += [i['start']] + [i['end']]
+        indeces += [-1]
 
+        host = ''
+        for e in range(0, len(indeces), 2):
+            host += sequence[indeces[e]:indeces[e+1]]
 
-    def writeInteins(self, outfilename):
-        with open(outfilename, "a") as fastafile:
-            for ind, row in self.inteindata.iterrows():
-                seq = Measure.splitseq(row)["intein"]
-                fastafile.write(f">{row.refseq_accno}|intein\n{seq}\n")
+        return host
 
-    def writeMeasurements(self, outfilename):
-        self.records.to_csv(outfilename, index=False)
+    @classmethod
+    def extract_inteins(cls, sequence, segments):
+        inteins = []
+        for segment in segments:
+            start = segment['start']
+            end = segment['end']
+            inteins.append({
+                'start': start,
+                'end': end,
+                'span': end-start,
+                'seq': sequence[start:end+1]
+            })
+        return inteins
 
 
 
@@ -105,12 +131,11 @@ if __name__=='__main__':
     from pathlib import Path
     cogs = Path("cogs")
     csv = Path("csv")
+    terms = Path("terms")
     results = {}
-    for subset in ["COG0209", "COG0417", "COG0305"]:
+    for subset in ["COG0209"]:
         seqfile = cogs / f"{subset}.tsv"
-        nterms = csv / f"TIGR01445.1_{subset}.csv"
-        cterms = csv / f"TIGR01443.1_{subset}.csv"
+        nterms = terms / f"TIGR01445.1_{subset}.csv"
+        cterms = terms / f"TIGR01443.1_{subset}.csv"
 
         m = Measure(seqfile, nterms, cterms)
-        results[subset] = m.records
-        print(subset, m.records.shape)

@@ -4,10 +4,8 @@ Parsers for different file formats used across this project.
 
 import csv
 from pathlib import Path
-from Bio import SearchIO
 from Bio import SeqIO
-
-
+from Bio import SearchIO
 
 class HMMSearchParser:
     KEYS = [
@@ -18,8 +16,6 @@ class HMMSearchParser:
         'end',
         'evalue'
     ]
-    def __init__(self, infilename):
-        self.records = self.parse(infilename)
 
     def parse(self, filename):
         """
@@ -45,13 +41,14 @@ class HMMSearchParser:
                         key: val
                         for key, val in zip(HMMSearchParser.KEYS, values)
                     })
-        return records
+        self.records = records
 
 
-    def write(self, outfilename):
+    def convert(self, infilename, outfilename):
         """
         Write fields of interest in HMMSearchParser.KEYS to CSV file.
         """
+        self.parse(infilename)
         with open(outfilename, "w") as outfile:
             writer = csv.DictWriter(outfile, fieldnames = HMMSearchParser.KEYS)
             writer.writeheader()

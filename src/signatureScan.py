@@ -7,7 +7,7 @@ import subprocess
 SIGNATURES = ["TIGR01443.1", "TIGR01445.1"] #cterm, nterm
 
 
-def scan(cogcode):
+def scan(cogcode, domE=0.01):
     """
     Scan sequences in fasta format with HMM of the intein signatures.
     Requieres hmmer installed or in PATH to use hmmsearch.
@@ -15,10 +15,8 @@ def scan(cogcode):
     for signature in SIGNATURES:
         subprocess.run([
                 "hmmsearch",
-                # "-E",
-                # "50",
-                # "--domE",
-                # "50",
+                "--domE",
+                str(domE),
                 "--domtblout",
                 f"scans/{signature}_{cogcode}.tab",
                 f"hmm/{signature}.HMM",
