@@ -15,7 +15,7 @@ scans = Path("scans")
 terms = Path("terms")
 
 
-def run(cogid, domE):
+def runCOG(cogid, domE):
     cogfile = cogs / f"{cogid}.tsv"
     # fetch sequences from Conserved Orthologous Groups
     if os.path.exists(cogfile):
@@ -75,4 +75,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     for cogid in args.cogids:
-        run(cogid, args.domE)
+        runCOG(cogid, args.domE)
