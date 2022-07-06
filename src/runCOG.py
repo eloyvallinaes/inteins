@@ -5,26 +5,31 @@ from pathlib import Path
 
 from fetch import COGFetch
 from signatureScan import scan
-from parse import HMMSearchParser
+from parse import HMMSearchParser, CSV2Fasta
 from measure import Measure
 
 fasta = Path("fasta")
 cogs = Path("cogs")
-csv  = Path("csv")
+csv = Path("csv")
 scans = Path("scans")
 terms = Path("terms")
 
+
 def run(cogid, domE):
-    # fetch sequences from Conserved Orthologous Groups
-    fastafile = fasta / f"{cogid}.fasta"
     cogfile = cogs / f"{cogid}.tsv"
-    if os.path.exists(fastafile) and os.path.exists(cogfile):
+    # fetch sequences from Conserved Orthologous Groups
+    if os.path.exists(cogfile):
         print("Re-starting from sequences already in disk")
     else:
         print(f"Fetching sequences from COG and RefSeq for {cogid}")
         fetcher = COGFetch(cogid, pagefrom=1, pageto=math.inf)
         fetcher.writeout()
-        fetcher.writefasta()
+
+    # parse COG file to fasta
+    fastafile = fasta / f"{cogid}.fasta"
+    parser = CSV2Fasta()
+    parser.load(cogfile)
+    parser.write(fastafile)
 
     # scan with hmmsearch
     print("Scanning")
@@ -56,16 +61,16 @@ def run(cogid, domE):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-                        "cogids",
-                        type = str,
-                        nargs='+',
-                        help = "One or serveral Conserved Orthologous Group id(s)"
-                    )
+                "cogids",
+                type=str,
+                nargs='+',
+                help="One or serveral Conserved Orthologous Group id(s)"
+    )
     parser.add_argument(
-                        "-domE",
-                        type=float,
-                        help="Conditional evalue for detection of intein signatures",
-                        default=0.01
+                "-domE",
+                type=float,
+                help="Conditional evalue for detection of intein signatures",
+                default=0.01
     )
 
     args = parser.parse_args()

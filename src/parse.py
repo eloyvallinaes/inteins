@@ -7,6 +7,7 @@ from pathlib import Path
 from Bio import SeqIO
 from Bio import SearchIO
 
+
 class HMMSearchParser:
     KEYS = [
         'motifname',
@@ -43,46 +44,32 @@ class HMMSearchParser:
                     })
         self.records = records
 
-
     def convert(self, infilename, outfilename):
         """
         Write fields of interest in HMMSearchParser.KEYS to CSV file.
         """
         self.parse(infilename)
         with open(outfilename, "w") as outfile:
-            writer = csv.DictWriter(outfile, fieldnames = HMMSearchParser.KEYS)
+            writer = csv.DictWriter(outfile, fieldnames=HMMSearchParser.KEYS)
             writer.writeheader()
             for row in self.records:
                 writer.writerow(row)
 
 
 class CSV2Fasta:
-    KEYS = [
-        "refseq_accno",
-        "sequence"
-    ]
-    def __init__(self, infilename):
+    def load(self, infilename):
         self.records = self.parse(infilename)
 
     def parse(self, infilename):
-        records = []
         with open(infilename, "r") as infile:
             reader = csv.DictReader(infile, delimiter="\t")
-            for row in reader:
-                acc = row['refseq_accno']
-                seq = row['sequence']
-                records.append({
-                    key: val
-                    for key, val in row.items()
-                    if key in CSV2Fasta.KEYS
-                })
+            records = {row['refseq_accno']: row['sequence'] for row in reader}
         return records
 
     def write(self, outfilename):
         with open(outfilename, "w") as outfile:
-            for record in self.records:
-                outfile.write(">{}\n{}\n".format(*record.values()))
-
+            for acc, seq in self.records.items():
+                outfile.write(f">{acc}\n{seq}\n")
 
 
 class Aln2Fasta:
@@ -90,6 +77,7 @@ class Aln2Fasta:
         "id",
         "sequence"
     ]
+
     def __init__(self, infilename):
         self.records = self.parse(infilename)
 
@@ -99,7 +87,7 @@ class Aln2Fasta:
             for record in SeqIO.parse(infile, "fasta"):
                 records.append({
                         "id": record.id,
-                        "sequence": record.seq.replace("-","").upper()
+                        "sequence": record.seq.replace("-", "").upper()
                 })
         return records
 
@@ -112,4 +100,6 @@ class Aln2Fasta:
 
 
 if __name__ == '__main__':
-    CSV2Fasta('csv/COG0209.csv').write("test.fasta")
+    parser = CSV2Fasta()
+    parser.load("cogs/COG0209.tsv")
+    parser.write("test.fasta")

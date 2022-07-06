@@ -4,7 +4,7 @@ Scan sequences for prosite motifs
 
 import subprocess
 
-SIGNATURES = ["TIGR01443.1", "TIGR01445.1"] #cterm, nterm
+SIGNATURES = ["TIGR01443.1", "TIGR01445.1"]  # cterm, nterm
 
 
 def scan(cogcode, domE=0.01):
@@ -14,18 +14,18 @@ def scan(cogcode, domE=0.01):
     """
     for signature in SIGNATURES:
         subprocess.run([
-                "hmmsearch",
-                "--domE",
-                str(domE),
-                "--domtblout",
-                f"scans/{signature}_{cogcode}.tab",
-                f"hmm/{signature}.HMM",
-                f"fasta/{cogcode}.fasta",
-            ],
+            "hmmsearch",
+            "--domE",
+            str(domE),
+            "--domtblout",
+            f"scans/{signature}_{cogcode}.tab",
+            f"hmm/{signature}.HMM",
+            f"fasta/{cogcode}.fasta",
+        ],
             stdout=subprocess.DEVNULL
         )
 
 
 if __name__ == "__main__":
-    for cogid in ["COG0209", "COG0305", "COG0417"]:
+    for cogid in ["IPR006142"]:
         scan(cogid)
