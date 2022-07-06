@@ -2,7 +2,9 @@
 Parsers for different file formats used across this project.
 """
 
+import re
 import csv
+import json
 from pathlib import Path
 from Bio import SeqIO
 from Bio import SearchIO
@@ -20,7 +22,8 @@ class HMMSearchParser:
 
     def parse(self, filename):
         """
-        Extract fields of interest and return a list of dictionaries
+        Extract fields of interest and add a list of dictionaries to
+        the records attribute.
         """
         parser = SearchIO.parse(filename, format="hmmsearch3-domtab")
         records = []
@@ -46,7 +49,7 @@ class HMMSearchParser:
 
     def convert(self, infilename, outfilename):
         """
-        Write fields of interest in HMMSearchParser.KEYS to CSV file.
+        Write parsed records HMMSearchParser.KEYS to CSV file.
         """
         self.parse(infilename)
         with open(outfilename, "w") as outfile:
@@ -99,7 +102,64 @@ class Aln2Fasta:
                 )
 
 
+class Fasta2Dict:
+    @staticmethod
+    def parse(filename):
+        records = {}
+        with open(filename) as fastafile:
+            for row in SeqIO.parse(fastafile, "fasta"):
+                records[row.id] = row.seq.upper()
+        return records
+
+
+class InterproSegments:
+    def parse(self, filename):
+        records = {}
+        with open(filename) as fastafile:
+            for row in SeqIO.parse(fastafile, "fasta"):
+                acc, limits, name = row.id.split("|")
+                seq = str(row.seq.upper())
+                inteins = InterproSegments.extractInteins(seq, limits)
+                host = InterproSegments.extractHost(seq, inteins)
+                records[acc] = {
+                    'inteins': inteins,
+                    'host': host,
+                    }
+        return records
+
+    @staticmethod
+    def parselimits(limits: str):
+        pattern = re.compile(r"([0-9]+)\.\.\.([0-9]+)")
+        for start, end in pattern.findall(limits):
+            yield int(start), int(end)
+
+    @staticmethod
+    def extractInteins(sequence, limits: str):
+        inteins = []
+        for start, end in InterproSegments.parselimits(limits):
+            inteins.append(
+                {
+                    'start': start,
+                    'end': end,
+                    'span': end-start,
+                    'seq': sequence[start:end]
+                }
+            )
+        return inteins
+
+    @staticmethod
+    def extractHost(sequence, inteins):
+        indeces = [0]
+        for i in inteins:
+            indeces += [i['start']] + [i['end']]
+        indeces += [-1]
+
+        host = ''
+        for e in range(0, len(indeces), 2):
+            host += sequence[indeces[e]:indeces[e + 1]]
+
+        return host
+
+
 if __name__ == '__main__':
-    parser = CSV2Fasta()
-    parser.load("cogs/COG0209.tsv")
-    parser.write("test.fasta")
+    segments = InterproSegments().parse("fasta/IPR036844.fasta")
