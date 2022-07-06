@@ -5,6 +5,7 @@ Parsers for different file formats used across this project.
 import re
 import csv
 import json
+import pandas as pd
 from pathlib import Path
 from Bio import SeqIO
 from Bio import SearchIO
@@ -113,7 +114,8 @@ class Fasta2Dict:
 
 
 class InterproSegments:
-    def parse(self, filename):
+    @staticmethod
+    def parse(filename):
         records = {}
         with open(filename) as fastafile:
             for row in SeqIO.parse(fastafile, "fasta"):
@@ -161,5 +163,72 @@ class InterproSegments:
         return host
 
 
+class COGSegments:
+    @staticmethod
+    def parse(seqfile, ntermfile, ctermfile):
+        seqmap = COGSegments.get_seqmap(seqfile)
+        segments = COGSegments.extract_segments(ntermfile, ctermfile)\
+                              .to_dict(orient="records")
+        data = {}
+        for acc, sequence in seqmap.items():
+            segments = [
+                segment
+                for segment in segments
+                if segment['refseq_accno'] == acc
+            ]
+            inteins = COGSegments.extract_inteins(sequence, segments)
+            hostseq = COGSegments.extract_host(sequence, inteins)
+            data[acc] = {'inteins': inteins, 'host': hostseq}
+        return data
+
+    @classmethod
+    def extract_host(cls, sequence, inteins):
+        indeces = [0]
+        for i in inteins:
+            indeces += [i['start']] + [i['end']]
+        indeces += [-1]
+
+        host = ''
+        for e in range(0, len(indeces), 2):
+            host += sequence[indeces[e]:indeces[e + 1]]
+
+        return host
+
+    @classmethod
+    def extract_inteins(cls, sequence, segments):
+        inteins = []
+        for segment in segments:
+            start = segment['start']
+            end = segment['end']
+            inteins.append({
+                'start': start,
+                'end': end,
+                'span': end - start,
+                'seq': sequence[start:end]
+            })
+        return inteins
+
+    @staticmethod
+    def get_seqmap(seqfile):
+        sequences = pd.read_csv(seqfile, sep="\t").to_dict(orient="records")
+        return {row['refseq_accno']: row['sequence'] for row in sequences}
+
+    @staticmethod
+    def extract_segments(ntermfile, ctermfile):
+        xcolumns = ["end", "motifname", "motifacc"]
+        ycolumns = ["start", "motifname", "motifacc"]
+        nterm = pd.read_csv(ntermfile).drop(xcolumns, axis="columns")
+        cterm = pd.read_csv(ctermfile).drop(ycolumns, axis="columns")
+        ss = nterm.merge(cterm, on="refseq_accno")
+        ss['span'] = ss.end - ss.start
+        # select index combinations giving positive, shortest span for each acc
+        # and output sorted by starting positions -- proper sequence slicing
+        return ss[ss.span > 0].sort_values("span")\
+                              .drop_duplicates(
+                                ["refseq_accno", "start"],
+                                keep="first")\
+                              .sort_values("start")
+
+
 if __name__ == '__main__':
-    segments = InterproSegments().parse("fasta/IPR036844.fasta")
+    segments = COGSegments.parse("fasta/IPR036844.fasta")

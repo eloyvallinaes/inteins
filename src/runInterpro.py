@@ -6,7 +6,7 @@ from pathlib import Path
 from fetch import COGFetch
 from signatureScan import scan
 from parse import HMMSearchParser, CSV2Fasta
-from measure import MeasureCOG
+from measure import Measure
 
 fasta = Path("fasta")
 cogs = Path("cogs")
