@@ -113,7 +113,22 @@ class Fasta2Dict:
         return records
 
 
-class InterproSegments:
+class Segments:
+    @staticmethod
+    def extractHost(sequence, inteins):
+        indeces = [0]
+        for i in inteins:
+            indeces += [i['start']] + [i['end']]
+        indeces += [-1]
+
+        host = ''
+        for e in range(0, len(indeces), 2):
+            host += sequence[indeces[e]:indeces[e + 1]]
+
+        return host
+
+
+class InterproSegments(Segments):
     @staticmethod
     def parse(filename):
         records = {}
@@ -122,7 +137,7 @@ class InterproSegments:
                 acc, limits, name = row.id.split("|")
                 seq = str(row.seq.upper())
                 inteins = InterproSegments.extractInteins(seq, limits)
-                host = InterproSegments.extractHost(seq, inteins)
+                host = Segments.extractHost(seq, inteins)
                 records[acc] = {
                     'inteins': inteins,
                     'host': host,
@@ -149,21 +164,8 @@ class InterproSegments:
             )
         return inteins
 
-    @staticmethod
-    def extractHost(sequence, inteins):
-        indeces = [0]
-        for i in inteins:
-            indeces += [i['start']] + [i['end']]
-        indeces += [-1]
 
-        host = ''
-        for e in range(0, len(indeces), 2):
-            host += sequence[indeces[e]:indeces[e + 1]]
-
-        return host
-
-
-class COGSegments:
+class COGSegments(Segments):
     @staticmethod
     def parse(seqfile, ntermfile, ctermfile):
         seqmap = COGSegments.get_seqmap(seqfile)
@@ -177,25 +179,12 @@ class COGSegments:
                 if segment['refseq_accno'] == acc
             ]
             inteins = COGSegments.extract_inteins(sequence, segments)
-            hostseq = COGSegments.extract_host(sequence, inteins)
+            hostseq = Segments.extract_host(sequence, inteins)
             data[acc] = {'inteins': inteins, 'host': hostseq}
         return data
 
-    @classmethod
-    def extract_host(cls, sequence, inteins):
-        indeces = [0]
-        for i in inteins:
-            indeces += [i['start']] + [i['end']]
-        indeces += [-1]
-
-        host = ''
-        for e in range(0, len(indeces), 2):
-            host += sequence[indeces[e]:indeces[e + 1]]
-
-        return host
-
-    @classmethod
-    def extract_inteins(cls, sequence, segments):
+    @staticmethod
+    def extract_inteins(sequence, segments):
         inteins = []
         for segment in segments:
             start = segment['start']
@@ -231,4 +220,4 @@ class COGSegments:
 
 
 if __name__ == '__main__':
-    segments = COGSegments.parse("fasta/IPR036844.fasta")
+    segments = InterproSegments.parse("fasta/IPR036844.fasta")

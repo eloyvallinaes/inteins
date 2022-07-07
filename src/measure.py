@@ -89,7 +89,6 @@ if __name__ == '__main__':
         seqfile = fasta / f"{subset}.fasta"
         m = MeasureInterpro(seqfile)
 
-
     for subset in ["COG0417"]:
         seqfile = cogs / (subset + ".tsv")
         ntermfile = terms / f"TIGR01445.1_{subset}.csv"
