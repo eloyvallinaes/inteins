@@ -104,13 +104,44 @@ class Aln2Fasta:
 
 
 class Fasta2Dict:
+    def __init__(self, infilename, subset={}):
+        self.records = self.parse(infilename, subset)
+
     @staticmethod
-    def parse(filename):
+    def parse(filename, subset={}):
+        """
+        Load FASTA file to a dict as id:seq pairs. Optionally, limit parsing to
+        IDs in subset.
+
+        :param filename: output file path to write to.
+        :type filename: str
+        :param subset: a set of IDs to retrieve from FASTA file
+        :type subset: set
+        """
         records = {}
         with open(filename) as fastafile:
             for row in SeqIO.parse(fastafile, "fasta"):
-                records[row.id] = row.seq.upper()
+                accession = row.id.split("|")[0].strip(">")
+                if len(subset) == 0 or accession in subset:
+                    records[accession] = row.seq.upper()
         return records
+
+    def write(self, filename: str, subset={}):
+        """
+        Write object records dictionary back to FASTA format. Optionally, limit
+        output to a selection of IDs.
+
+        :param filename: output file path to write to.
+        :type filename: str
+        :param subset: a set of IDs to write to FASTA
+        :type subset: set
+        """
+        with open(filename, "w") as fastafile:
+            for accession, seq in self.records.items():
+                if len(subset) == 0 or accession in subset:
+                    fastafile.write(
+                            f">{accession}\n{seq}\n"
+                    )
 
 
 class Segments:
@@ -125,10 +156,25 @@ class Segments:
         for e in range(0, len(indeces), 2):
             host += sequence[indeces[e]:indeces[e + 1]]
 
-        return host
+        return [{"seq": host}]
 
 
 class InterproSegments(Segments):
+    def __init__(self, filename):
+        self.name = Path(filename).stem
+        self.segments = self.parse(filename)
+
+    def to_fasta(self, entity, outfilename):
+        if entity not in ["intein", "host"]:
+            raise ValueError(
+                "{entity} not understood; must be 'inteins' or 'host'"
+            )
+        with open(outfilename, "w") as fastafile:
+            for acc, values in self.segments.items():
+                for i, part in enumerate(values[entity]):
+                    sequence = part['seq']
+                    fastafile.write(f">{acc}|{entity}_{i}\n{sequence}\n")
+
     @staticmethod
     def parse(filename):
         records = {}
@@ -220,4 +266,4 @@ class COGSegments(Segments):
 
 
 if __name__ == '__main__':
-    segments = InterproSegments.parse("fasta/IPR036844.fasta")
+    interpro = InterproSegments("fasta/IPR036844.fasta")
