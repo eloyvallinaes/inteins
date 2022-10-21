@@ -10,16 +10,27 @@ import pandas as pd
 from Bio import Entrez
 Entrez.email = "eloyvallina33@gmail.com"
 
+
 def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
+
 
 class RefSeqFetch:
     """
     Given RefSeq protein ids, retrieve sequence and taxonomic information
     over the NCBI Entrez interface.
     """
-    taxkeys = ["kingdom", "phylum", "subphylum", "class", "order", "family", "genus"]
+    taxkeys = [
+        "kingdom",
+        "phylum",
+        "subphylum",
+        "class",
+        "order",
+        "family",
+        "genus"
+    ]
+
     def set_ids(self, ids):
         self.ids = ids
 
@@ -97,16 +108,16 @@ class COGFetch:
         for record in self.readrange():
             records.append(
                 dict(
-                    evalue= record["evalue"],
-                    taxid=  record["organism"]["taxid"],
-                    assembly_id= record["organism"]["assembly_id"],
-                    refseq_accno = record["protein"]["name"],
-                    membership= record["membership"]["membership_class"],
-                    funcats = "".join([
+                    evalue=record["evalue"],
+                    taxid=record["organism"]["taxid"],
+                    assembly_id=record["organism"]["assembly_id"],
+                    refseq_accno=record["protein"]["name"],
+                    membership=record["membership"]["membership_class"],
+                    funcats="".join([
                                         cat["name"]
                                         for cat in record['cog']['funcats']
                                     ]),
-                    cogid = record['cog']['cogid'],
+                    cogid=record['cog']['cogid'],
                 )
             )
         return records
@@ -120,7 +131,6 @@ class COGFetch:
         self.sequencer.set_ids(ids)
         return self.sequencer.getdata()
 
-
     def writeout(self, dirname="cogs"):
         """
         Merge sequence and COG data and write dataframe to file.
@@ -130,7 +140,6 @@ class COGFetch:
 
         out = self.toDataFrame()
         out.to_csv(f"{dirname}/{self.cogid}.tsv", index=False, sep="\t")
-
 
     def writefasta(self, dirname="fasta"):
         """

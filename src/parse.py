@@ -61,11 +61,11 @@ class HMMSearchParser:
 
 
 class CSV2Fasta:
-    def load(self, infilename):
-        self.records = self.parse(infilename)
+    def __init__(self, filename):
+        self.records = self.parse(filename)
 
-    def parse(self, infilename):
-        with open(infilename, "r") as infile:
+    def parse(self, filename):
+        with open(filename, "r") as infile:
             reader = csv.DictReader(infile, delimiter="\t")
             records = {row['refseq_accno']: row['sequence'] for row in reader}
         return records
@@ -104,11 +104,13 @@ class Aln2Fasta:
 
 
 class Fasta2Dict:
-    def __init__(self, infilename, subset={}):
-        self.records = self.parse(infilename, subset)
+    def __init__(self, filename, subset={}):
+        self.subset = subset
+        self.sequences, self.taxids, self.limits = self.parse(filename)
+        self.inteins = self.extractInteins()
+        self.hosts = self.extractHosts()
 
-    @staticmethod
-    def parse(filename, subset={}):
+    def parse(self, filename):
         """
         Load FASTA file to a dict as id:seq pairs. Optionally, limit parsing to
         IDs in subset.
@@ -118,30 +120,107 @@ class Fasta2Dict:
         :param subset: a set of IDs to retrieve from FASTA file
         :type subset: set
         """
-        records = {}
+        sequences = dict()
+        taxids = dict()
+        limits = dict()
         with open(filename) as fastafile:
             for row in SeqIO.parse(fastafile, "fasta"):
-                accession = row.id.split("|")[0].strip(">")
-                if len(subset) == 0 or accession in subset:
-                    records[accession] = row.seq.upper()
-        return records
+                acc = row.id.split("|")[0].strip(">")
+                taxid = row.id.split("|")[1]
+                limstr = row.id.split("|")[2]
+                if len(self.subset) == 0 or acc in self.subset:
+                    sequences[acc] = row.seq.upper()
+                    taxids[acc] = taxid
+                    limits[acc] = Fasta2Dict.parseLimits(limstr)
 
-    def write(self, filename: str, subset={}):
+        return sequences, taxids, limits
+
+    def write_sequences(self, filename: str, use_taxids=False):
         """
         Write object records dictionary back to FASTA format. Optionally, limit
-        output to a selection of IDs.
+        output to a selection of IDs and/or write taxids as sequence headers.
 
         :param filename: output file path to write to.
         :type filename: str
         :param subset: a set of IDs to write to FASTA
         :type subset: set
+        :param use_taxids: use taxids as sequence headers in FASTA file.
+        :type use_taxids: bool
+
         """
         with open(filename, "w") as fastafile:
-            for accession, seq in self.records.items():
-                if len(subset) == 0 or accession in subset:
-                    fastafile.write(
-                            f">{accession}\n{seq}\n"
-                    )
+            for acc, seq in self.sequences.items():
+                if len(self.subset) == 0 or acc in self.subset:
+                    if use_taxids:
+                        fastafile.write(
+                                f">{self.taxids[acc]}\n{seq}\n"
+                        )
+                    else:
+                        fastafile.write(
+                                f">{acc}\n{seq}\n"
+                        )
+
+    def write_segments(self, filename: str, entity: str, use_taxids=False):
+        if entity not in ["inteins", "hosts"]:
+            raise ValueError(
+                f"{entity} not understood; must be 'inteins' or 'hosts'"
+            )
+
+        segments = self.inteins if entity == "inteins" else self.hosts
+        with open(filename, "w") as fastafile:
+            for acc, records in segments.items():
+                for i, part in enumerate(records):
+                    seq = part['seq']
+                    if use_taxids:
+                        taxid = self.taxids[acc]
+                        fastafile.write(f">{taxid}|{entity}_{i}\n{seq}\n")
+
+                    else:
+                        fastafile.write(f">{acc}|{entity}_{i}\n{seq}\n")
+
+    @staticmethod
+    def parseLimits(limits: str):
+        pattern = re.compile(r"([0-9]+)\.\.\.([0-9]+)")
+        return [
+            {'start': int(start), 'end': int(end)}
+            for start, end in pattern.findall(limits)
+        ]
+
+    def extractInteins(self):
+        records = {}
+        for acc, limEntries in self.limits.items():
+            inteins = []
+            for lim in limEntries:
+                start = lim['start']
+                end = lim['end']
+                inteins.append({
+                        'start': start,
+                        'end': end,
+                        'span': end-start,
+                        'seq': self.sequences[acc][start:end]
+                })
+
+            records[acc] = inteins
+
+        return records
+
+    def extractHosts(self):
+        hosts = dict()
+        for acc, seq in self.sequences.items():
+            indeces = [0]
+            for record in self.inteins[acc]:
+                indeces += [record['start']] + [record['end']]
+            indeces += [-1]
+
+            host_seq = ''
+            for e in range(0, len(indeces), 2):
+                host_seq += self.sequences[acc][indeces[e]:indeces[e + 1]]
+
+            hosts[acc] = [{
+                "seq": host_seq, 'span': len(host_seq)
+            }]
+
+        return hosts
 
 
 class Segments:
@@ -265,5 +344,124 @@ class COGSegments(Segments):
                               .sort_values("start")
 
 
+class CDHit:
+    """
+    Interpret CD-Hit clstr file and extract:
+    1. Cluster compositions
+    2. Cluster representatives
+
+    Interface with Fasta2Dict to write FASTA subsets for clusters.
+    """
+    accPattern = r">([A-Z]{1}[A-z0-9]{4,})"
+    repPattern = r"[0-9]{1,}\s*[0-9]{1,}aa, >([A-Z]{1}[A-z0-9]{4,})\.\.\. *"
+
+    def __init__(self, filename):
+        self.clusters = self.parse(filename)  # dict
+        self.ncluster = len(self.clusters)
+        self.reps = self.get_representatives(filename)
+
+    @classmethod
+    def parse(cls, filename):
+        result = []
+        with open(filename, "r") as clstrfile:
+            while True:
+                line = clstrfile.readline()
+                if not line:
+                    break
+                elif line.startswith('#'):
+                    continue
+                elif line.startswith(">"):
+                    members = []
+                    while True:
+                        record = clstrfile.readline()
+                        if not record:
+                            break
+                        elif record.startswith(">"):
+                            result.append(members)
+                            members = []
+                        else:
+                            members.append(
+                                re.search(cls.accPattern, record).group(1)
+                            )
+
+            result.append(members)
+        return result
+
+    @classmethod
+    def get_representatives(cls, filename):
+        reps = []
+        with open(filename, "r") as clstrfile:
+            while True:
+                line = clstrfile.readline()
+                if not line:
+                    break
+                if "*" in line:
+                    reps.append(
+                        re.match(cls.repPattern, line).group(1)
+                    )
+        return reps
+
+    def rep2members(self):
+        """
+        A dictionary mapping cluster representatives to cluster members,
+        including itself.
+        """
+        return {r: m for r, m in zip(self.reps, self.clusters)}
+
+    def cluster2Fasta(self, fastafile, clusteri, outname, replacement=dict()):
+        """
+        Write FASTA file containing all sequences in a cluster.
+        Optionally, replace accessions in headers with any other key, such as
+        taxids, through the Fasta2Dict interface.
+
+        :param fastafile: a file containing the sequences from which clusters
+        where obtained.
+        :type fastafile: str
+        :param clusteri: the cluster index to write from self.clusters
+        :type clusteri: int
+        :param outname: output FASTA filename
+        :type outname: str
+        :param replacement: a dictionary mapping accessions to alternative keys.
+        See Fasta2Dict.
+        :type replacement:
+
+        """
+        seqs = Fasta2Dict(fastafile, self.clusters[clusteri])
+        if replacement:
+            seqs.replaceKeys(replacement)
+
+        seqs.write(outname)
+
+    def reps2Fasta(self, fastafile, outname, replacement=dict()):
+        """
+        Write FASTA file containing representative sequences.
+        Optionally, replace accessions in headers with any other key, such as
+        taxids, through the Fasta2Dict interface.
+
+        :param fastafile: a file containing the sequences from which clusters
+        where obtained.
+        :type fastafile: str
+        :param outname: output FASTA filename
+        :type outname: str
+        :param replacement: a dictionary mapping accessions to alternative keys.
+        See Fasta2Dict.
+        :type replacement:
+        """
+        seqs = Fasta2Dict(fastafile, self.reps)
+        if replacement:
+            seqs.replaceKeys(replacement)
+
+        seqs.write(outname)
+
+    def membership(self):
+        return {
+            m: i
+            for i, members in enumerate(self.clusters)
+            for m in members
+        }
+
+
 if __name__ == '__main__':
-    interpro = InterproSegments("fasta/IPR036844.fasta")
+    # r = CDHit("cdhit/rdh/rdh_host.clstr")
+    # r.cluster2Fasta("fasta/IPR036844.fasta", 0, "rdh_cluster0.fasta")
+    parser = Fasta2Dict("IPR036844.fasta", subset={'A3CXE7', 'A7U6F1'})

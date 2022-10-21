@@ -71,23 +71,93 @@ linReg = LinearRegression()
 
 
 def load_interpro():
+    # separate datasets
     hh = pd.read_csv(csv / "IPR036844_host_phys.csv", dtype={"taxid": str})
     ii = pd.read_csv(csv / "IPR036844_intein_phys.csv", dtype={"taxid": str})
-
+    # join properties from intein and intein
     phys = ii.merge(hh, on="refseq_accno", suffixes=("_intein", "_host"))
+    # collect groups
     groups = pd.read_csv("csv/ipr036844_groups_map.csv")[["accession", "group"]]
+    # collect taxonomy
     taxonomy = pd.read_csv("csv/ipr036844_taxonomy.csv", dtype={"taxid": str})
-
-    grouped = phys.merge(
+    # merge
+    df = phys.merge(
         groups,
         left_on="refseq_accno",
         right_on="accession",
-    )
-
-    return grouped.merge(
+        how='left'
+    ).merge(
         taxonomy,
         on="accession",
+        how='left'
     )
+    # add groupnames
+    df["groupname"] = df.group.map(orthoGroups)
+    return df
+
+
+def load_proteomes(db="ncbi", metric="avg"):
+    if db not in ["ncbi", "uniprot"]:
+        raise ValueError(f"db must be 'ncbi' or 'uniprot', not {db}")
+
+    if metric not in ["avg", "median"]:
+        raise ValueError(f"metric must be 'avg' or 'median', not {metric}")
+
+    datasets = Path("analysis/proteomeData")
+    pattern = f"*_{db}_{metric}.csv"
+
+    df = pd.concat(pd.read_csv(dataset) for dataset in datasets.glob(pattern))
+    df.columns = [
+        'length',
+        'mass',
+        'SASAmiller',
+        'nc',
+        'ncd',
+        'fFatty',
+        'fPos',
+        'fNeg',
+        'Species',
+        'taxid',
+        'seqnum',
+        'fCharged',
+        'ncd1000',
+        'mwkda',
+        'I', 'L', 'V', 'A', 'G', 'P', 'F', 'M', 'W', 'Y', 'H', 'T', 'S', 'N',
+        'Q', 'D', 'E', 'K', 'R', 'C', 'X', 'U', 'kingdom', 'phylum', 'class',
+        'order', 'family', 'genus', 'species', 'GC', 'AssemblyID'
+    ]
+    df.taxid = df.taxid.astype(str)
+    return df.drop(["Species", "mass"], axis="columns")
+
+
+def load_merged_data():
+    """
+    Return the interpro data merged with the proteome average data. Columns
+    labeled with _proteome suffix.
+    """
+    # interpro sequences
+    interpro = load_interpro()
+    # proteome data
+    proteomes = load_proteomes().drop_duplicates(
+        subset="taxid",
+        keep='first'
+    )
+    # merged dataset
+    return interpro.merge(
+            proteomes.add_suffix("_proteome"),
+            how="left",
+            left_on='taxid',
+            right_on="taxid_proteome",
+    )
+
+
+def acc2Taxid():
+    taxonomy = pd.read_csv("csv/IPR036844_taxonomy.csv", dtype={"taxid": str})\
+                 .dropna(subset=["taxid"])
+    return {
+        entry['accession']: entry['taxid']
+        for entry in taxonomy[['taxid', 'accession']].to_dict(orient="records")
+    }
 
 
 def pairkde(
@@ -133,40 +203,6 @@ def pairplot(ax, df, x, y, i="intein", j="host", color="w", label=""):
             zorder=0,
             color="k",
         )
-
-
-def load_proteomes(db="ncbi", metric="avg"):
-    if db not in ["ncbi", "uniprot"]:
-        raise ValueError(f"db must be 'ncbi' or 'uniprot', not {db}")
-
-    if metric not in ["avg", "median"]:
-        raise ValueError(f"metric must be 'avg' or 'median', not {metric}")
-
-    datasets = Path("analysis/proteomeData")
-    pattern = f"*_{db}_{metric}.csv"
-
-    df = pd.concat(pd.read_csv(dataset) for dataset in datasets.glob(pattern))
-    df.columns = [
-        'length',
-        'mass',
-        'SASAmiller',
-        'nc',
-        'ncd',
-        'fFatty',
-        'fPos',
-        'fNeg',
-        'Species',
-        'taxid',
-        'seqnum',
-        'fCharged',
-        'ncd1000',
-        'mwkda',
-        'I', 'L', 'V', 'A', 'G', 'P', 'F', 'M', 'W', 'Y', 'H', 'T', 'S', 'N',
-        'Q', 'D', 'E', 'K', 'R', 'C', 'X', 'U', 'kingdom', 'phylum', 'class',
-        'order', 'family', 'genus', 'species', 'GC', 'AssemblyID'
-    ]
-    df.taxid = df.taxid.astype(str)
-    return df.drop(["Species", "mass"], axis="columns")
 
 
 def taxkde(data, x, rank, name, into, n=10) -> plt.figure:
