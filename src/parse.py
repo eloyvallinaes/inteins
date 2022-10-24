@@ -137,7 +137,7 @@ class Fasta2Dict:
 
     def write_sequences(self, filename: str, use_taxids=False):
         """
-        Write object records dictionary back to FASTA format. Optionally, limit
+        Write object's sequences back to FASTA format. Optionally, limit
         output to a selection of IDs and/or write taxids as sequence headers.
 
         :param filename: output file path to write to.
@@ -161,6 +161,20 @@ class Fasta2Dict:
                         )
 
     def write_segments(self, filename: str, entity: str, use_taxids=False):
+        """
+        Write FASTA file of inteins or hosts. Optionally replace accessions
+        with taxids as sequence identifiers.
+
+        :param filename: output destination file
+        :type filename: str or pathlike
+        :param entity: either 'inteins' or 'hosts'
+        :type entity: str
+        :param use_taxids: whether to replace accessions with taxids. Two
+        sequences migh be given the same taxid, which can cause errors
+        downstream.
+        :type use_taxids: bool
+
+        """
         if entity not in ["inteins", "hosts"]:
             raise ValueError(
                 f"{entity} not understood; must be 'inteins' or 'hosts'"
@@ -180,6 +194,18 @@ class Fasta2Dict:
 
     @staticmethod
     def parseLimits(limits: str):
+        """
+        Extract start and end positions from sequence headers regular language.
+
+        :param limits: the string contaning the limits specified as integeres
+        separated by '...', eg. IPR036844(3...109;139...177).
+        :type limits: str
+        :return: parsed limits, eg.
+        [{'start': 3, 'end': 109}, {'start': 139, 'end': 177}]
+        :rtype: list[dict], eg.
+
+
+        """
         pattern = re.compile(r"([0-9]+)\.\.\.([0-9]+)")
         return [
             {'start': int(start), 'end': int(end)}
@@ -187,6 +213,9 @@ class Fasta2Dict:
         ]
 
     def extractInteins(self):
+        """
+        Work out intein segments from limits.
+        """
         records = {}
         for acc, limEntries in self.limits.items():
             inteins = []
@@ -205,10 +234,13 @@ class Fasta2Dict:
         return records
 
     def extractHosts(self):
+        """
+        Work out host protein spliced product from inteins limits.
+        """
         hosts = dict()
         for acc, seq in self.sequences.items():
             indeces = [0]
-            for record in self.inteins[acc]:
+            for record in self.limits[acc]:
                 indeces += [record['start']] + [record['end']]
             indeces += [-1]
 
@@ -271,12 +303,18 @@ class InterproSegments(Segments):
 
     @staticmethod
     def parselimits(limits: str):
+        """
+        Extract limits information from from string regular language.
+        """
         pattern = re.compile(r"([0-9]+)\.\.\.([0-9]+)")
         for start, end in pattern.findall(limits):
             yield int(start), int(end)
 
     @staticmethod
     def extractInteins(sequence, limits: str):
+        """
+        Create list of intein segments based on limits.
+        """
         inteins = []
         for start, end in InterproSegments.parselimits(limits):
             inteins.append(
@@ -464,4 +502,5 @@ class CDHit:
 if __name__ == '__main__':
     # r = CDHit("cdhit/rdh/rdh_host.clstr")
     # r.cluster2Fasta("fasta/IPR036844.fasta", 0, "rdh_cluster0.fasta")
-    parser = Fasta2Dict("IPR036844.fasta", subset={'A3CXE7', 'A7U6F1'})
+    subset = {'A3CXE7', 'A7U6F1'}
+    parser = Fasta2Dict("fasta/interpro/IPR036844.fasta", subset=subset)
