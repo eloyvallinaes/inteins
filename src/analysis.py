@@ -9,7 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 
-csv = Path("csv")
+csv = Path("csv/interpro")
 
 
 COLORS = {
@@ -67,29 +67,41 @@ PHYSCOLS = [
     'ncd1000',
 ]
 
+TAXCOLS = [
+    'superkingdom',
+    'phylum',
+    'class',
+    'order',
+    'family',
+    'genus',
+    'species'
+]
+
 linReg = LinearRegression()
 
 
 def load_interpro():
     # separate datasets
-    hh = pd.read_csv(csv / "IPR036844_host_phys.csv", dtype={"taxid": str})
-    ii = pd.read_csv(csv / "IPR036844_intein_phys.csv", dtype={"taxid": str})
+    hh = pd.read_csv(csv / "hosts.phys", dtype={"taxid": str})
+    ii = pd.read_csv(csv / "inteins.phys")  # taxid column omitted
     # join properties from intein and intein
-    phys = ii.merge(hh, on="refseq_accno", suffixes=("_intein", "_host"))
+    phys = ii.merge(
+        hh,
+        on="accession",
+        suffixes=("_intein", "_host")
+    )
     # collect groups
-    groups = pd.read_csv("csv/ipr036844_groups_map.csv")[["accession", "group"]]
+    groups = pd.read_csv(csv / "groups.csv")[["accession", "group"]]
     # collect taxonomy
-    taxonomy = pd.read_csv("csv/ipr036844_taxonomy.csv", dtype={"taxid": str})
+    taxonomy = pd.read_csv(csv / "taxonomy.csv", dtype={"taxid": str})
     # merge
     df = phys.merge(
         groups,
-        left_on="refseq_accno",
-        right_on="accession",
-        how='left'
+        on="accession",
     ).merge(
         taxonomy,
-        on="accession",
-        how='left'
+        on="taxid",
+        how="left"
     )
     # add groupnames
     df["groupname"] = df.group.map(orthoGroups)
@@ -145,7 +157,6 @@ def load_merged_data():
     # merged dataset
     return interpro.merge(
             proteomes.add_suffix("_proteome"),
-            how="left",
             left_on='taxid',
             right_on="taxid_proteome",
     )
