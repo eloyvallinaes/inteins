@@ -22,15 +22,15 @@ COLORS = {
 orthoGroups = {
     "OG6_104977": "hedgehog protein",
     "OG6_107432": "replicative DNA helicase",
-    "OG6_118012": "N/A",
+    "OG6_118012": "hintN domain containing protein (OG6_118012)",
     "OG6_100448": "ribonucleotide reductase",
-    "OG6_186238": "hintN domain containing protein",
-    "OG6_109432": "hintN domain containing protein",
-    "OG6_107988": "DNA polymerase III",
+    "OG6_186238": "OG6_186238",
+    "OG6_109432": "hintN domain containing protein (OG6_109432)",
+    "OG6_107988": "DNA polymerase III-alpha",
     "OG6_100284": "DNA topoisomerase",
     "OG6_105177": "DNA gyrase",
-    "OG6_101445": "tRNA-splicigng ligase rtcB",
-    "OG6_121348": "DNA polymerase II",
+    "OG6_101445": "tRNA-splicing ligase rtcB",
+    "OG6_121348": "DNA polymerase II-large",
     "OG6_104530": "protein recA",
     "OG6_128365": "DNA-methyltransferase"
 }
@@ -80,16 +80,35 @@ TAXCOLS = [
 linReg = LinearRegression()
 
 
-def load_interpro():
+def load_phys():
     # separate datasets
     hh = pd.read_csv(csv / "hosts.phys", dtype={"taxid": str})
     ii = pd.read_csv(csv / "inteins.phys")  # taxid column omitted
     # join properties from intein and intein
-    phys = ii.merge(
+    return ii.merge(
         hh,
         on="accession",
         suffixes=("_intein", "_host")
     )
+
+
+def load_mini():
+    phys = load_phys()
+    mini = pd.read_csv(csv / "mini.phys")
+    endo = pd.read_csv(csv / "endo.phys")
+    return phys.merge(
+        mini.add_suffix("_mini"),
+        left_on="intein_id",
+        right_on="intein_id_mini"
+    ).merge(
+        endo.add_suffix("_endo"),
+        left_on="intein_id",
+        right_on="intein_id_endo"
+    )
+
+
+def load_interpro(mini=False):
+    phys = load_mini() if mini is True else load_phys()
     # collect groups
     groups = pd.read_csv(csv / "groups.csv")[["accession", "group"]]
     # collect taxonomy
@@ -98,6 +117,7 @@ def load_interpro():
     df = phys.merge(
         groups,
         on="accession",
+        how='left'
     ).merge(
         taxonomy,
         on="taxid",
@@ -142,13 +162,13 @@ def load_proteomes(db="ncbi", metric="avg"):
     return df.drop(["Species", "mass"], axis="columns")
 
 
-def load_merged_data():
+def load_merged_data(mini=True):
     """
     Return the interpro data merged with the proteome average data. Columns
     labeled with _proteome suffix.
     """
     # interpro sequences
-    interpro = load_interpro()
+    interpro = load_interpro(mini=mini)
     # proteome data
     proteomes = load_proteomes().drop_duplicates(
         subset="taxid",
@@ -156,19 +176,11 @@ def load_merged_data():
     )
     # merged dataset
     return interpro.merge(
-            proteomes.add_suffix("_proteome"),
+            proteomes[PHYSCOLS + ['taxid']].add_suffix("_proteome"),
             left_on='taxid',
             right_on="taxid_proteome",
+            how='left'
     )
-
-
-def acc2Taxid():
-    taxonomy = pd.read_csv("csv/IPR036844_taxonomy.csv", dtype={"taxid": str})\
-                 .dropna(subset=["taxid"])
-    return {
-        entry['accession']: entry['taxid']
-        for entry in taxonomy[['taxid', 'accession']].to_dict(orient="records")
-    }
 
 
 def pairkde(
@@ -377,3 +389,49 @@ def reframeToEntities(
         dff.append(df)
 
     return pd.concat(dff, axis=0).reset_index(drop=True)
+
+
+def entities_kde_ax(ax, data, varname, entities=[]):
+    """
+    Kernel density estimate plot for a variable across entities.
+
+    """
+    entlist = entities if entities else ['host', 'intein', 'endo', 'mini']
+    for entity in entlist:
+        sns.kdeplot(
+            ax=ax,
+            data=data,
+            x=f"{varname}_{entity}",
+            label=entity
+        )
+    ax.set_xlabel(f"segment {varname}")
+
+
+def entities_proteome_ax(ax, data, varname, entities=[], **kwargs):
+    """
+    Scatter plot of variable across entities
+    """
+    for entity in ['host', 'intein', 'endo', 'mini']:
+        sns.scatterplot(
+            data=data,
+            x=f"{varname}_proteome",
+            y=f"{varname}_{entity}",
+            label=entity,
+            ax=ax,
+            **kwargs
+        )
+    ax.axline([0, 0], slope=1, linestyle="--", color="k")
+    ax.set_ylabel(f"segment {varname}")
+    return ax
+
+
+def get_accessions(data, short=True):
+    """
+    A handy function to print accessions such that you can copy/paste them in
+    uniprot ID mapping.
+
+    """
+    lim = 6 if short else np.Inf
+    print("\n".join(
+        data[data.accession.str.len() <= lim].accession.values
+    ))
