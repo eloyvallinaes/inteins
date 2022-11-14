@@ -5,10 +5,11 @@ Parsers for different file formats used across this project.
 import re
 import csv
 import json
+import copy
 import pandas as pd
 from pathlib import Path
-from Bio import SeqIO
-from Bio import SearchIO
+from Bio import SeqIO, SearchIO
+from typing import Iterator
 
 
 class HMMSearchParser:
@@ -107,8 +108,8 @@ class Fasta2Dict:
     def __init__(self, filename, subset={}):
         self.subset = subset
         self.sequences, self.taxids, self.limits = self.parse(filename)
-        self.inteins = self.extractInteins()
-        self.hosts = self.extractHosts()
+        self.annots = self.extract_annotations()
+        self.hosts = self.extract_hosts()
 
     def parse(self, filename):
         """
@@ -131,11 +132,11 @@ class Fasta2Dict:
                 if len(self.subset) == 0 or acc in self.subset:
                     sequences[acc] = row.seq.upper()
                     taxids[acc] = taxid
-                    limits[acc] = Fasta2Dict.parseLimits(limstr)
+                    limits[acc] = Fasta2Dict.parse_limits(limstr)
 
         return sequences, taxids, limits
 
-    def write_sequences(self, filename: str, use_taxids=False):
+    def write_sequences(self, filename: str, use_taxids=False, subset={}):
         """
         Write object's sequences back to FASTA format. Optionally, limit
         output to a selection of IDs and/or write taxids as sequence headers.
@@ -150,24 +151,28 @@ class Fasta2Dict:
         """
         with open(filename, "w") as fastafile:
             for acc, seq in self.sequences.items():
-                if len(self.subset) == 0 or acc in self.subset:
-                    if use_taxids:
-                        fastafile.write(
-                                f">{self.taxids[acc]}\n{seq}\n"
-                        )
-                    else:
-                        fastafile.write(
-                                f">{acc}\n{seq}\n"
-                        )
+                if acc not in subset and len(subset) > 0:
+                    continue
+                if use_taxids:
+                    fastafile.write(
+                            f">{self.taxids[acc]}\n{seq}\n"
+                    )
+                else:
+                    fastafile.write(
+                            f">{acc}\n{seq}\n"
+                    )
 
-    def write_segments(self, filename: str, entity: str, use_taxids=False):
+    def write_segments(
+                    self, filename: str, entity: str, use_taxids=False,
+                    subset={}
+                ):
         """
-        Write FASTA file of inteins or hosts. Optionally replace accessions
+        Write FASTA file of annotations or hosts. Optionally replace accessions
         with taxids as sequence identifiers.
 
         :param filename: output destination file
         :type filename: str or pathlike
-        :param entity: either 'inteins' or 'hosts'
+        :param entity: either 'annotations' or 'hosts'
         :type entity: str
         :param use_taxids: whether to replace accessions with taxids. Two
         sequences migh be given the same taxid, which can cause errors
@@ -175,14 +180,16 @@ class Fasta2Dict:
         :type use_taxids: bool
 
         """
-        if entity not in ["inteins", "hosts"]:
+        if entity not in ["annots", "hosts"]:
             raise ValueError(
                 f"{entity} not understood; must be 'inteins' or 'hosts'"
             )
 
-        segments = self.inteins if entity == "inteins" else self.hosts
+        segments = self.annots if entity == "annots" else self.hosts
         with open(filename, "w") as fastafile:
             for acc, records in segments.items():
+                if acc not in subset and len(subset) > 0:
+                    continue
                 for i, part in enumerate(records):
                     seq = part['seq']
                     if use_taxids:
@@ -193,7 +200,7 @@ class Fasta2Dict:
                         fastafile.write(f">{acc}|{entity}_{i}\n{seq}\n")
 
     @staticmethod
-    def parseLimits(limits: str):
+    def parse_limits(limits: str):
         """
         Extract start and end positions from sequence headers regular language.
 
@@ -212,9 +219,9 @@ class Fasta2Dict:
             for start, end in pattern.findall(limits)
         ]
 
-    def extractInteins(self):
+    def extract_annotations(self):
         """
-        Work out intein segments from limits.
+        Work out annotation segments from limits.
         """
         records = {}
         for acc, limEntries in self.limits.items():
@@ -233,9 +240,9 @@ class Fasta2Dict:
 
         return records
 
-    def extractHosts(self):
+    def extract_hosts(self):
         """
-        Work out host protein spliced product from inteins limits.
+        Work out host protein spliced product from annotation limits.
         """
         hosts = dict()
         for acc, seq in self.sequences.items():
@@ -253,6 +260,69 @@ class Fasta2Dict:
             }]
 
         return hosts
+
+    def __sub__(self, other):
+        """
+        Implement Fasta2Dict subtraction as obtaing the difference between
+        a long and short annotation, eg., to generate mininteins from an
+        object of intein annotations minus an object of endonuclease
+        annotations.
+
+        """
+        new = copy.copy(self)  # shallow copy is enough?
+        selfKeys = self.annots.keys()
+        otherKeys = other.annots.keys()
+        interKeys = set(selfKeys).intersection(otherKeys)
+        differences = dict()
+        for acc in interKeys:
+            differences[acc] = []
+            for diff in Fasta2Dict.sequence_difference(self, other, acc):
+                differences[acc].append({"seq": diff, "span": len(diff)})
+
+        new.annots = differences
+        return new
+
+    def __add__(self, other):
+        """
+        Implement subtraction as obtaing the combination of two annotations
+        such that two discontinous segments may be joined. Since we are adding
+        sequences, this operation is generally non-commutative: a + b =/= b + a.
+
+        """
+        new = copy.copy(self)
+        selfKeys = self.annots.keys()
+        otherKeys = other.annots.keys()
+        interKeys = set(selfKeys).intersection(otherKeys)
+        joined = dict()
+        for acc in interKeys:
+            joined[acc] = []
+            for cont in Fasta2Dict.sequence_join(self, other, acc):
+                joined[acc].append({"seq": cont, "span": len(cont)})
+
+        new.annots = joined
+        return new
+
+    @staticmethod
+    def sequence_difference(outer, inner, acc) -> Iterator[str]:
+        seq = outer.sequences[acc]
+        for outrec, inrec in zip(outer.annots[acc], inner.annots[acc]):
+            # enforce outer surrounds inner annotation
+            if (
+                outrec['start'] <= inrec['start'] and
+                outrec['end'] >= inrec['end']
+            ):
+                diff = (
+                    seq[outrec['start']:inrec['start']] +
+                    seq[inrec['end']:outrec['end']]
+                )
+                yield diff
+            else:
+                yield ''
+
+    @staticmethod
+    def sequence_join(first, second, acc) -> Iterator[str]:
+        for rec1, rec2 in zip(first.annots[acc], second.annots[acc]):
+            yield rec1['seq'] + rec2['seq']
 
 
 class Segments:
@@ -499,8 +569,17 @@ class CDHit:
         }
 
 
+def split_fasta_file(fastafile):
+    """
+    Break sequence collecition in FASTA format into single sequence files.
+
+    """
+    for records in SeqIO.parse(fastafile, 'fasta'):
+        with open(f"{records.id}.fasta", "w") as seqfile:
+            seqfile.write(f">{records.id}\n{records.seq}")
+
+
 if __name__ == '__main__':
-    # r = CDHit("cdhit/rdh/rdh_host.clstr")
-    # r.cluster2Fasta("fasta/IPR036844.fasta", 0, "rdh_cluster0.fasta")
-    subset = {'A3CXE7', 'A7U6F1'}
-    parser = Fasta2Dict("fasta/interpro/IPR036844.fasta", subset=subset)
+    fasta = Path("fasta/interpro")
+    hint = Fasta2Dict(fasta / 'IPR036844.fasta')
+    endo = Fasta2Dict(fasta / 'IPR027434.fasta')
