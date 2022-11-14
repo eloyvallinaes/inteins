@@ -26,6 +26,9 @@ def physcoprops(seq: str):
     """
     Measure amino acid composition and physicochemical properties of sequences.
     """
+    if len(seq) == 0:
+        return dict()
+
     # start props dict with aa composition
     L = len(seq)
     props = {f"{letter}": seq.count(letter) / L for letter in AA}
@@ -48,25 +51,51 @@ def physcoprops(seq: str):
     return props
 
 
-if __name__ == '__main__':
-    fasta = Path("fasta/interpro")
-    parser = parse.Fasta2Dict(fasta / 'IPR036844.fasta')
-    # data = []
-    # for acc, inteins in parser.inteins.items():
-    #     for i, record in enumerate(inteins):
-    #         m = physcoprops(record['seq'])
-    #         m.update({'accession': acc, 'intein_id': f"{acc}_{str(i)}"})
-    #         data.append(m)
-    #
-    # df = pd.DataFrame(data)
-    # df.to_csv("inteins.phys", index=False)
+def measure_segments(segments):
+    """
+    Measure over a segments records dictionary.
 
+    """
     data = []
-    for acc, hosts in parser.hosts.items():
-        record = hosts[0]
-        m = physcoprops(record['seq'])
-        m.update({'accession': acc, 'taxid': parser.taxids[acc]})
-        data.append(m)
+    for acc, annotations in segments.items():
+        for i, record in enumerate(annotations):
+            m = physcoprops(record['seq'])
+            m.update({
+                'accession': acc,
+                'segment_id': f"{acc}_{str(i)}",
+            })
+            data.append(m)
+
+    return data
+
+
+def measure(parser, entity, outname):
+    """
+    Common measure function for sequences annotated with one interpro code
+    and entity either 'annots' or 'hosts'.
+
+    """
+    if entity not in ['annots', 'hosts']:
+        raise ValueError(
+            f"{entity} not understood; must be 'annots' or 'hosts'"
+        )
+    segments = parser.annots if entity == "annots" else parser.hosts
+    # measure the segment collection
+    data = measure_segments(segments)
+    # add the taxid column
+    for m in data:
+        acc = m['accession']
+        m.update({
+            'taxid': parser.taxids[acc]
+        })
 
     df = pd.DataFrame(data)
-    df.to_csv("hosts.phys", index=False)
+    df.to_csv(outname, index=False)
+
+
+if __name__ == '__main__':
+    fasta = Path("fasta/interpro")
+    nterm = parse.Fasta2Dict(fasta / "IPR003587_head.fasta")
+    cterm = parse.Fasta2Dict(fasta / "IPR003586.fasta")
+    splicing = nterm + cterm
+    measure(splicing, 'annots', 'splicing.phys')
