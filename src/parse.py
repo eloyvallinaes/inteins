@@ -109,7 +109,7 @@ class Fasta2Dict:
         self.subset = subset
         self.sequences, self.taxids, self.limits = self.parse(filename)
         self.annots = self.extract_annotations()
-        self.hosts = self.extract_hosts()
+        # self.hosts = self.extract_hosts()
 
     def parse(self, filename):
         """
@@ -130,9 +130,10 @@ class Fasta2Dict:
                 taxid = row.id.split("|")[1]
                 limstr = row.id.split("|")[2]
                 if len(self.subset) == 0 or acc in self.subset:
-                    sequences[acc] = row.seq.upper()
+                    sequences[acc] = str(row.seq.upper())
                     taxids[acc] = taxid
-                    limits[acc] = Fasta2Dict.parse_limits(limstr)
+                    for i, lim in enumerate(Fasta2Dict.parse_limits(limstr)):
+                        limits[f"{acc}_{i}"] = lim
 
         return sequences, taxids, limits
 
@@ -182,7 +183,7 @@ class Fasta2Dict:
         """
         if entity not in ["annots", "hosts"]:
             raise ValueError(
-                f"{entity} not understood; must be 'inteins' or 'hosts'"
+                f"{entity} not understood; must be 'annots' or 'hosts'"
             )
 
         segments = self.annots if entity == "annots" else self.hosts
@@ -194,7 +195,7 @@ class Fasta2Dict:
                     seq = part['seq']
                     if use_taxids:
                         taxid = self.taxids[acc]
-                        fastafile.write(f">{taxid}|{entity}_{i}\n{seq}\n")
+                        fastafile.write(f">{taxid}\n{seq}\n")
 
                     else:
                         fastafile.write(f">{acc}|{entity}_{i}\n{seq}\n")
@@ -224,19 +225,17 @@ class Fasta2Dict:
         Work out annotation segments from limits.
         """
         records = {}
-        for acc, limEntries in self.limits.items():
-            inteins = []
-            for lim in limEntries:
-                start = lim['start']
-                end = lim['end']
-                inteins.append({
-                        'start': start,
-                        'end': end,
-                        'span': end-start,
-                        'seq': self.sequences[acc][start:end]
-                })
-
-            records[acc] = inteins
+        for key, lim in self.limits.items():
+            acc = key.split('_')[0]
+            start = lim['start']
+            end = lim['end']
+            records[key] = {
+                'start': start,
+                'end': end,
+                'span': end-start,
+                'seq': self.sequences[acc][start:end],
+                'acc': acc
+            }
 
         return records
 
@@ -246,15 +245,23 @@ class Fasta2Dict:
         """
         hosts = dict()
         for acc, seq in self.sequences.items():
+            i = 0
+            # collect indeces of all annotated segments
             indeces = [0]
-            for record in self.limits[acc]:
-                indeces += [record['start']] + [record['end']]
+            while True:
+                segment_id = f"{acc}_{i}"
+                try:
+                    record = self.annots[segment_id]
+                    indeces += [record['start']] + [record['end']]
+                    i += 1
+                except KeyError:
+                    break
             indeces += [-1]
-
+            # join host segments
             host_seq = ''
             for e in range(0, len(indeces), 2):
                 host_seq += self.sequences[acc][indeces[e]:indeces[e + 1]]
-
+            # add to dictionary
             hosts[acc] = [{
                 "seq": host_seq, 'span': len(host_seq)
             }]
@@ -263,66 +270,69 @@ class Fasta2Dict:
 
     def __sub__(self, other):
         """
-        Implement Fasta2Dict subtraction as obtaing the difference between
-        a long and short annotation, eg., to generate mininteins from an
-        object of intein annotations minus an object of endonuclease
-        annotations.
+        Implement subtraction as obtaing the difference between
+        a long and short annotation. The operation is done directly on the
+        sequences the str.replace(substr, "") method on annotations common
+        to both objects.
 
         """
         new = copy.copy(self)  # shallow copy is enough?
-        selfKeys = self.annots.keys()
-        otherKeys = other.annots.keys()
-        interKeys = set(selfKeys).intersection(otherKeys)
-        differences = dict()
-        for acc in interKeys:
-            differences[acc] = []
-            for diff in Fasta2Dict.sequence_difference(self, other, acc):
-                differences[acc].append({"seq": diff, "span": len(diff)})
+        self_keys = self.annots.keys()
+        other_keys = other.annots.keys()
+        inter_keys = set(self_keys).intersection(other_keys)
+        new.annots = dict()
+        for key in inter_keys:
+            diff = self.annots[key]['seq'].replace(other.annots[key]['seq'], "")
+            new.annots[key] = {
+                "seq": diff,
+                "span": len(diff),
+                'acc': self.annots[key]['acc']
+            }
 
-        new.annots = differences
         return new
 
     def __add__(self, other):
         """
-        Implement subtraction as obtaing the combination of two annotations
-        such that two discontinous segments may be joined. Since we are adding
-        sequences, this operation is generally non-commutative: a + b =/= b + a.
+        Implement addition as obtaing the combination of two annotations
+        The addition is done directly on the sequences simply by str + str
+        on annotations common to both objects.
 
         """
         new = copy.copy(self)
-        selfKeys = self.annots.keys()
-        otherKeys = other.annots.keys()
-        interKeys = set(selfKeys).intersection(otherKeys)
-        joined = dict()
-        for acc in interKeys:
-            joined[acc] = []
-            for cont in Fasta2Dict.sequence_join(self, other, acc):
-                joined[acc].append({"seq": cont, "span": len(cont)})
+        self_keys = set(self.annots.keys())
+        other_keys = set(other.annots.keys())
+        inter_keys = self_keys.intersection(other_keys)
+        new.annots = dict()
+        for key in inter_keys:
+            cont = self.annots[key]['seq'] + other.annots[key]['seq']
+            new.annots[key] = {
+                "seq": cont,
+                "span": len(cont),
+                "acc": self.annots[key]['acc']
+            }
 
-        new.annots = joined
         return new
 
-    @staticmethod
-    def sequence_difference(outer, inner, acc) -> Iterator[str]:
-        seq = outer.sequences[acc]
-        for outrec, inrec in zip(outer.annots[acc], inner.annots[acc]):
-            # enforce outer surrounds inner annotation
-            if (
-                outrec['start'] <= inrec['start'] and
-                outrec['end'] >= inrec['end']
-            ):
-                diff = (
-                    seq[outrec['start']:inrec['start']] +
-                    seq[inrec['end']:outrec['end']]
+    def align_ends(self, nterm, cterm):
+        """
+        Fix disparities between nterminal and cterminal limits given to
+        guarantee perfect overlap.
+        """
+        for key, limit in self.limits.items():
+            acc = self.annots[key]['acc']
+            try:
+                limit['start'] = min(
+                    nterm.limits[key]['start'],
+                    limit['start']
                 )
-                yield diff
-            else:
-                yield ''
-
-    @staticmethod
-    def sequence_join(first, second, acc) -> Iterator[str]:
-        for rec1, rec2 in zip(first.annots[acc], second.annots[acc]):
-            yield rec1['seq'] + rec2['seq']
+                limit['end'] = max(
+                    cterm.limits[key]['end'],
+                    limit['end']
+                )
+                limit['span'] = limit['end'] - limit['start']
+            except KeyError:
+                pass
+        self.annots = self.extract_annotations()
 
 
 class Segments:
@@ -582,4 +592,9 @@ def split_fasta_file(fastafile):
 if __name__ == '__main__':
     fasta = Path("fasta/interpro")
     hint = Fasta2Dict(fasta / 'IPR036844.fasta')
+    nterm = Fasta2Dict(fasta / "IPR003587.fasta")
+    cterm = Fasta2Dict(fasta / "IPR003586.fasta")
+    hint.align_ends(nterm, cterm)
     endo = Fasta2Dict(fasta / 'IPR027434.fasta')
+    aux = hint - nterm - cterm - endo
+    splicing = nterm + cterm
