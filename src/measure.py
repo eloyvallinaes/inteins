@@ -57,14 +57,13 @@ def measure_segments(segments):
 
     """
     data = []
-    for acc, annotations in segments.items():
-        for i, record in enumerate(annotations):
-            m = physcoprops(record['seq'])
-            m.update({
-                'accession': acc,
-                'segment_id': f"{acc}_{str(i)}",
-            })
-            data.append(m)
+    for segment_id, annot in segments.items():
+        m = physcoprops(annot['seq'])
+        m.update({
+            'accession': annot['acc'],
+            'segment_id': segment_id,
+        })
+        data.append(m)
 
     return data
 
@@ -95,7 +94,14 @@ def measure(parser, entity, outname):
 
 if __name__ == '__main__':
     fasta = Path("fasta/interpro")
-    nterm = parse.Fasta2Dict(fasta / "IPR003587_head.fasta")
+    hint = parse.Fasta2Dict(fasta / "IPR036844.fasta")
+    endo = parse.Fasta2Dict(fasta / "IPR027434.fasta")
+    nterm = parse.Fasta2Dict(fasta / "IPR003587.fasta")
     cterm = parse.Fasta2Dict(fasta / "IPR003586.fasta")
     splicing = nterm + cterm
+    aux = hint - nterm - cterm - endo
+    # measure(hint, "annots", "intein.fasta")
+    # measure(hint, "hosts", "host.fasta")
+    # measure(endo, "annots", "endo.phys")
+    measure(aux, "annots", "aux.phys")
     measure(splicing, 'annots', 'splicing.phys')
